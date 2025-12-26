@@ -5,12 +5,21 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 // Configuration from environment variables
+// CUBEAPM_URL takes precedence - use full URL like https://prod-cube.example.com
+// Falls back to building URL from CUBEAPM_HOST + ports for backward compatibility
+const CUBEAPM_URL = process.env.CUBEAPM_URL;
 const CUBEAPM_HOST = process.env.CUBEAPM_HOST || "localhost";
 const CUBEAPM_QUERY_PORT = process.env.CUBEAPM_QUERY_PORT || "3140";
 const CUBEAPM_INGEST_PORT = process.env.CUBEAPM_INGEST_PORT || "3130";
 
-const queryBaseUrl = `http://${CUBEAPM_HOST}:${CUBEAPM_QUERY_PORT}`;
-const ingestBaseUrl = `http://${CUBEAPM_HOST}:${CUBEAPM_INGEST_PORT}`;
+// If CUBEAPM_URL is provided, use it directly (removes trailing slash if present)
+// Otherwise build from host:port
+const queryBaseUrl = CUBEAPM_URL
+  ? CUBEAPM_URL.replace(/\/$/, '')
+  : `http://${CUBEAPM_HOST}:${CUBEAPM_QUERY_PORT}`;
+const ingestBaseUrl = CUBEAPM_URL
+  ? CUBEAPM_URL.replace(/\/$/, '')
+  : `http://${CUBEAPM_HOST}:${CUBEAPM_INGEST_PORT}`;
 
 // Create the MCP server
 const server = new McpServer({

@@ -1,6 +1,6 @@
 {
   "name": "cubeapm-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for CubeAPM - Query traces, metrics, and logs from your observability platform using AI assistants",
   "type": "module",
   "main": "dist/index.js",
