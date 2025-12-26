@@ -1,0 +1,59 @@
+{
+  "name": "cubeapm-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for CubeAPM - Query traces, metrics, and logs from your observability platform using AI assistants",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "cubeapm-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TechnicalRhino/cubeapm-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TechnicalRhino/cubeapm-mcp/issues"
+  },
+  "homepage": "https://github.com/TechnicalRhino/cubeapm-mcp#readme",
+  "author": "TechnicalRhino",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cubeapm",
+    "observability",
+    "apm",
+    "traces",
+    "metrics",
+    "logs",
+    "claude",
+    "ai",
+    "monitoring",
+    "distributed-tracing",
+    "promql",
+    "logsql"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
