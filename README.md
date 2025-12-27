@@ -2,6 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/cubeapm-mcp.svg)](https://www.npmjs.com/package/cubeapm-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![MCP Server](https://lobehub.com/badge/mcp/technicalrhino-cubeapm-mcp)](https://lobehub.com/mcp/technicalrhino-cubeapm-mcp)
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [CubeAPM](https://cubeapm.com) - enabling AI assistants like Claude to query your observability data including traces, metrics, and logs.
 
@@ -179,6 +180,30 @@ You can now ask Claude questions like:
 | Tool | Description |
 |------|-------------|
 | `ingest_metrics_prometheus` | Send metrics in Prometheus text exposition format |
+
+## Prompts
+
+Pre-defined templates for common observability tasks:
+
+| Prompt | Description |
+|--------|-------------|
+| `investigate-service` | Comprehensive service investigation - checks errors, latency, and traces |
+| `check-latency` | Get P50, P95, P99 latency percentiles for a service |
+| `find-slow-traces` | Find slowest traces to identify performance bottlenecks |
+
+**Usage Example:**
+```
+Use the investigate-service prompt for Kratos-Prod
+```
+
+## Resources
+
+Readable resources exposing CubeAPM data and configuration:
+
+| Resource URI | Description |
+|--------------|-------------|
+| `cubeapm://config` | Current CubeAPM connection configuration |
+| `cubeapm://query-patterns` | Query patterns and naming conventions reference |
 
 ## CubeAPM Query Patterns
 

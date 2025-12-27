@@ -384,6 +384,198 @@ server.tool(
   }
 );
 
+// ============================================
+// PROMPTS - Pre-defined templates for common tasks
+// ============================================
+
+server.prompt(
+  "investigate-service",
+  "Investigate issues with a specific service - checks errors, latency, and recent traces",
+  {
+    service: z.string().describe("The service name to investigate (case-sensitive)"),
+    timeRange: z.string().optional().default("1h").describe("Time range to look back (e.g., 1h, 6h, 24h)"),
+  },
+  async ({ service, timeRange }) => {
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Please investigate the ${service} service for the last ${timeRange}:
+
+1. First, check the error rate using metrics:
+   - Query: sum(increase(cube_apm_calls_total{service="${service}", status_code="ERROR"}[${timeRange}])) / sum(increase(cube_apm_calls_total{service="${service}"}[${timeRange}])) * 100
+
+2. Check P95 latency:
+   - Query: histogram_quantiles("phi", 0.95, sum by (vmrange) (increase(cube_apm_latency_bucket{service="${service}", span_kind="server"}[5m])))
+
+3. Search for error traces:
+   - Use search_traces with service="${service}", query="status_code=ERROR"
+
+4. Check recent logs if available:
+   - Query logs with {service_name="${service}"} or discover labels first with *
+
+Summarize any issues found and provide recommendations.`,
+          },
+        },
+      ],
+    };
+  }
+);
+
+server.prompt(
+  "check-latency",
+  "Check P50, P95, and P99 latency percentiles for a service",
+  {
+    service: z.string().describe("The service name (case-sensitive)"),
+  },
+  async ({ service }) => {
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Check the latency percentiles for ${service} service:
+
+Use query_metrics_instant with these queries:
+
+1. P50 (median):
+   histogram_quantiles("phi", 0.5, sum by (vmrange, service) (increase(cube_apm_latency_bucket{service="${service}", span_kind="server"}[5m])))
+
+2. P95:
+   histogram_quantiles("phi", 0.95, sum by (vmrange, service) (increase(cube_apm_latency_bucket{service="${service}", span_kind="server"}[5m])))
+
+3. P99:
+   histogram_quantiles("phi", 0.99, sum by (vmrange, service) (increase(cube_apm_latency_bucket{service="${service}", span_kind="server"}[5m])))
+
+Note: Latency values are in SECONDS (multiply by 1000 for milliseconds).
+
+Present the results in a clear table format.`,
+          },
+        },
+      ],
+    };
+  }
+);
+
+server.prompt(
+  "find-slow-traces",
+  "Find the slowest traces for a service to identify performance bottlenecks",
+  {
+    service: z.string().describe("The service name (case-sensitive)"),
+    minDuration: z.string().optional().default("1s").describe("Minimum duration to filter (e.g., 500ms, 1s, 2s)"),
+  },
+  async ({ service, minDuration }) => {
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `Find slow traces for ${service} service (minimum duration: ${minDuration}):
+
+1. Search for traces using search_traces with:
+   - service: "${service}"
+   - sortBy: "duration"
+   - spanKind: "server"
+   - limit: 10
+
+2. For the slowest trace found, use get_trace to fetch the full trace details
+
+3. Analyze the trace waterfall to identify:
+   - Which span took the longest
+   - Any external dependencies causing delays
+   - Database queries or API calls that are slow
+
+Provide a summary of performance bottlenecks and recommendations.`,
+          },
+        },
+      ],
+    };
+  }
+);
+
+// ============================================
+// RESOURCES - Expose CubeAPM data as readable resources
+// ============================================
+
+server.resource(
+  "config",
+  "cubeapm://config",
+  {
+    description: "Current CubeAPM connection configuration",
+    mimeType: "application/json",
+  },
+  async () => {
+    return {
+      contents: [
+        {
+          uri: "cubeapm://config",
+          mimeType: "application/json",
+          text: JSON.stringify({
+            queryUrl: queryBaseUrl,
+            ingestUrl: ingestBaseUrl,
+            usingFullUrl: !!CUBEAPM_URL,
+            host: CUBEAPM_HOST,
+            queryPort: CUBEAPM_QUERY_PORT,
+            ingestPort: CUBEAPM_INGEST_PORT,
+          }, null, 2),
+        },
+      ],
+    };
+  }
+);
+
+server.resource(
+  "query-patterns",
+  "cubeapm://query-patterns",
+  {
+    description: "CubeAPM-specific query patterns and naming conventions",
+    mimeType: "text/markdown",
+  },
+  async () => {
+    return {
+      contents: [
+        {
+          uri: "cubeapm://query-patterns",
+          mimeType: "text/markdown",
+          text: `# CubeAPM Query Patterns
+
+## Metrics Naming Conventions
+- Prefix: \`cube_apm_*\` (e.g., cube_apm_calls_total, cube_apm_latency_bucket)
+- Service label: \`service\` (NOT "server" or "service_name")
+- Common labels: env, service, span_kind, status_code, http_code
+
+## Histogram Queries (Percentiles)
+CubeAPM uses VictoriaMetrics-style histograms with \`vmrange\` label:
+
+\`\`\`promql
+# P95 Latency
+histogram_quantiles("phi", 0.95, sum by (vmrange, service) (
+  increase(cube_apm_latency_bucket{service="MyService", span_kind="server"}[5m])
+))
+\`\`\`
+
+Note: Latency values are in SECONDS (0.05 = 50ms)
+
+## Logs (LogsQL)
+- Use \`*\` to discover available labels
+- Lambda logs: \`{faas.name="my-function"}\`
+- Service logs: \`{service_name="my-service"}\`
+
+## Traces
+- query, env, service are REQUIRED parameters
+- Use \`sortBy=duration\` to find slow traces
+- Filter by spanKind: server, client, consumer, producer
+`,
+        },
+      ],
+    };
+  }
+);
+
 // Start the server
 async function main() {
   const transport = new StdioServerTransport();
