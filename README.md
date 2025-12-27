@@ -159,12 +159,16 @@ You can now ask Claude questions like:
 | `search_traces` | Search traces by service, environment, or custom query |
 | `get_trace` | Fetch complete trace details by trace ID |
 
-**Search Parameters:**
-- `query` - Optional search query
-- `env` - Environment filter (e.g., `production`)
-- `service` - Service name filter
-- `start` / `end` - Time range
+**Search Parameters (Required):**
+- `query` - Search query (default: `*` for wildcard)
+- `env` - Environment filter (default: `UNSET`)
+- `service` - Service name filter (**required**, case-sensitive)
+- `start` / `end` - Time range (RFC3339 or Unix timestamp)
+
+**Search Parameters (Optional):**
 - `limit` - Maximum results (default: 20)
+- `spanKind` - Filter by span type: `server`, `client`, `consumer`, `producer`
+- `sortBy` - Sort by: `duration` (useful for finding slow traces)
 
 **Get Trace Parameters:**
 - `trace_id` - Hex-encoded trace ID

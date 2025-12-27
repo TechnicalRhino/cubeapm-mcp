@@ -236,27 +236,42 @@ server.tool(
   "search_traces",
   `Search for traces in CubeAPM matching the specified criteria. Returns trace snippets with key spans.
 
-Tips for effective trace searches:
+IMPORTANT - Required Parameters:
+- query, env, service, start, end are ALL REQUIRED by CubeAPM API
+- Use query="*" for wildcard search
+- Use env="UNSET" if environment is not configured
 - Service names are case-sensitive (e.g., "Kratos-Prod" not "kratos")
-- Use the service parameter to filter by service name
-- Use the env parameter to filter by environment
-- Time range is required (start/end in RFC3339 or Unix timestamp)
+
+Optional filters:
+- spanKind: server, client, consumer, producer
+- sortBy: duration (to find slow traces)
 
 To discover available service names, first query metrics:
-count by (service) (cube_apm_calls_total{env="UNSET"})`,
+count by (service) (cube_apm_calls_total{env="UNSET"})
+
+Example: Find slow server spans in Shopify-Prod
+  query="*", env="UNSET", service="Shopify-Prod", spanKind="server", sortBy="duration"`,
   {
-    query: z.string().optional().describe("The traces search query"),
-    env: z.string().optional().describe("Environment name to filter by"),
-    service: z.string().optional().describe("Service name to filter by"),
+    query: z.string().default("*").describe("The traces search query (use * for wildcard)"),
+    env: z.string().default("UNSET").describe("Environment name (use UNSET if not configured)"),
+    service: z.string().describe("Service name to filter by (REQUIRED, case-sensitive)"),
     start: z.string().describe("Start timestamp in RFC3339 format or Unix seconds"),
     end: z.string().describe("End timestamp in RFC3339 format or Unix seconds"),
     limit: z.number().optional().default(20).describe("Maximum number of traces to return"),
+    spanKind: z.string().optional().describe("Filter by span kind: server, client, consumer, producer"),
+    sortBy: z.string().optional().describe("Sort results by: duration"),
   },
-  async ({ query, env, service, start, end, limit }) => {
-    const params = new URLSearchParams({ start, end, limit: String(limit) });
-    if (query) params.append("query", query);
-    if (env) params.append("env", env);
-    if (service) params.append("service", service);
+  async ({ query, env, service, start, end, limit, spanKind, sortBy }) => {
+    const params = new URLSearchParams({
+      query,
+      env,
+      service,
+      start,
+      end,
+      limit: String(limit)
+    });
+    if (spanKind) params.append("spanKind", spanKind);
+    if (sortBy) params.append("sortBy", sortBy);
 
     const response = await fetch(
       `${queryBaseUrl}/api/traces/api/v1/search?${params.toString()}`,
