@@ -68,7 +68,8 @@ You can now ask Claude questions like:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `CUBEAPM_HOST` | `localhost` | CubeAPM server hostname or IP |
+| `CUBEAPM_URL` | - | Full URL to CubeAPM (e.g., `https://cube.example.com`). Takes precedence over HOST/PORT settings. |
+| `CUBEAPM_HOST` | `localhost` | CubeAPM server hostname or IP (used if CUBEAPM_URL not set) |
 | `CUBEAPM_QUERY_PORT` | `3140` | Port for querying APIs (traces, metrics, logs) |
 | `CUBEAPM_INGEST_PORT` | `3130` | Port for ingestion APIs |
 
@@ -89,7 +90,22 @@ You can now ask Claude questions like:
 }
 ```
 
-**Production:**
+**Production (with full URL):**
+```json
+{
+  "mcpServers": {
+    "cubeapm": {
+      "command": "npx",
+      "args": ["-y", "cubeapm-mcp"],
+      "env": {
+        "CUBEAPM_URL": "https://cubeapm.internal.company.com"
+      }
+    }
+  }
+}
+```
+
+**Production (with host/port):**
 ```json
 {
   "mcpServers": {
@@ -160,20 +176,68 @@ You can now ask Claude questions like:
 |------|-------------|
 | `ingest_metrics_prometheus` | Send metrics in Prometheus text exposition format |
 
+## CubeAPM Query Patterns
+
+### Metrics Naming Conventions
+
+CubeAPM uses specific naming conventions that differ from standard OpenTelemetry:
+
+| What | CubeAPM Convention |
+|------|-------------------|
+| Metric prefix | `cube_apm_*` (e.g., `cube_apm_calls_total`, `cube_apm_latency_bucket`) |
+| Service label | `service` (NOT `server` or `service_name`) |
+| Common labels | `env`, `service`, `span_kind`, `status_code`, `http_code` |
+
+### Histogram Queries (P50, P90, P95, P99)
+
+CubeAPM uses **VictoriaMetrics-style histograms** with `vmrange` labels instead of Prometheus `le` buckets:
+
+```promql
+# ✅ Correct - Use histogram_quantiles() with vmrange
+histogram_quantiles("phi", 0.95, sum by (vmrange, service) (
+  increase(cube_apm_latency_bucket{service="MyService", span_kind="server"}[5m])
+))
+
+# ❌ Wrong - Standard Prometheus syntax won't work
+histogram_quantile(0.95, sum by (le) (rate(http_request_duration_bucket[5m])))
+```
+
+> **Note:** Latency values are returned in **seconds** (0.05 = 50ms)
+
+### Logs Label Discovery
+
+Log labels vary by source. Use `*` query first to discover available labels:
+
+| Source | Common Labels |
+|--------|---------------|
+| Lambda functions | `faas.name`, `faas.arn`, `env`, `aws.lambda_request_id` |
+| Services | `service_name`, `level`, `host` |
+
+```logsql
+# Discover all labels
+*
+
+# Lambda function logs
+{faas.name="my-lambda-prod"}
+
+# Search with text filter
+{faas.name=~".*-prod"} AND "error"
+```
+
 ## Example Queries
 
 ### Logs
 ```
-"Find all ERROR logs from auth-service in the last 30 minutes"
-"Show me logs containing 'connection refused' from the database service"
-"Query logs where trace_id matches xyz123"
+"Show me logs from webhook-lambda-prod"
+"Find all logs containing 'timeout' in the last hour"
+"Query logs from Lambda functions in production"
 ```
 
 ### Metrics
 ```
-"What's the average request duration for the API gateway?"
-"Show me CPU usage for all services over the last 6 hours"
-"Graph the error rate for checkout-service with 1-minute resolution"
+"What's the P95 latency for Kratos-Prod service?"
+"Show me error rate for all services"
+"List all available services in CubeAPM"
 ```
 
 ### Traces

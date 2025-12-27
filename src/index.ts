@@ -33,7 +33,27 @@ const server = new McpServer({
 
 server.tool(
   "query_logs",
-  "Query logs from CubeAPM using LogsQL syntax. Returns log entries matching the query.",
+  `Query logs from CubeAPM using LogsQL syntax (VictoriaLogs compatible). Returns log entries matching the query.
+
+IMPORTANT - Log Label Discovery:
+- Labels vary by source! Use "*" query first to discover available labels
+- Lambda logs use: faas.name, faas.arn, env, aws.lambda_request_id
+- Service logs may use: service_name, level, host
+- NOT all sources have "service_name" - check the _stream field in results
+
+LogsQL Query Syntax:
+- Wildcard (discover labels): *
+- Stream filters: {faas.name="my-lambda-prod"}
+- Text search: {faas.name="webhook-lambda-prod"} AND "error"
+- Regex match: {faas.name=~".*-prod"}
+- Negation: {faas.name!="unwanted-service"}
+- Combine filters: {env="UNSET", faas.name=~".*-lambda.*"}
+
+Example queries:
+- All logs (discover structure): *
+- Lambda logs: {faas.name="webhook-lambda-prod"}
+- Search errors: {faas.name=~".*"} AND "error"
+- By environment: {env="production"}`,
   {
     query: z.string().describe("The log search query including stream filters (LogsQL syntax)"),
     start: z.string().describe("Start time in RFC3339 format (e.g., 2024-01-01T00:00:00Z) or Unix timestamp in seconds"),
@@ -86,7 +106,24 @@ server.tool(
 
 server.tool(
   "query_metrics_instant",
-  "Execute an instant query against CubeAPM metrics at a single point in time. Uses PromQL-compatible syntax.",
+  `Execute an instant query against CubeAPM metrics at a single point in time. Uses PromQL-compatible syntax (VictoriaMetrics flavor).
+
+IMPORTANT - CubeAPM Metric Naming Conventions:
+- Metrics use "cube_apm_" prefix (e.g., cube_apm_calls_total, cube_apm_latency_bucket)
+- Service label is "service" (NOT "server" or "service_name")
+- Common labels: env, service, span_kind (server|client|consumer|producer), status_code, http_code
+
+HISTOGRAM QUERIES (P50, P90, P95, P99):
+- CubeAPM uses VictoriaMetrics-style histograms with "vmrange" label (NOT Prometheus "le" buckets)
+- Use histogram_quantiles() function instead of histogram_quantile()
+- Syntax: histogram_quantiles("phi", 0.95, sum by (vmrange) (increase(cube_apm_latency_bucket{...}[5m])))
+- Latency values are returned in SECONDS (0.05 = 50ms)
+
+Example queries:
+- P95 latency: histogram_quantiles("phi", 0.95, sum by (vmrange, service) (increase(cube_apm_latency_bucket{service="MyService", span_kind="server"}[5m])))
+- Error rate: sum by (service) (increase(cube_apm_calls_total{status_code="ERROR"}[1h])) / sum by (service) (increase(cube_apm_calls_total[1h])) * 100
+- List services: count by (service) (cube_apm_calls_total{env="UNSET"})
+- Request count: sum by (service) (increase(cube_apm_calls_total{span_kind=~"server|consumer"}[1h]))`,
   {
     query: z.string().describe("The metrics query expression (PromQL syntax)"),
     time: z.string().describe("Evaluation timestamp in RFC3339 format or Unix timestamp in seconds"),
@@ -130,7 +167,21 @@ server.tool(
 
 server.tool(
   "query_metrics_range",
-  "Execute a range query against CubeAPM metrics over a time range. Returns time series data.",
+  `Execute a range query against CubeAPM metrics over a time range. Returns time series data. Uses PromQL-compatible syntax (VictoriaMetrics flavor).
+
+IMPORTANT - CubeAPM Metric Naming Conventions:
+- Metrics use "cube_apm_" prefix (e.g., cube_apm_calls_total, cube_apm_latency_bucket)
+- Service label is "service" (NOT "server" or "service_name")
+- Common labels: env, service, span_kind (server|client|consumer|producer), status_code, http_code
+
+HISTOGRAM QUERIES (P50, P90, P95, P99):
+- CubeAPM uses VictoriaMetrics-style histograms with "vmrange" label (NOT Prometheus "le" buckets)
+- Use histogram_quantiles() function instead of histogram_quantile()
+- Syntax: histogram_quantiles("phi", 0.95, sum by (vmrange, service) (increase(cube_apm_latency_bucket{...}[5m])))
+- Latency values are returned in SECONDS (0.05 = 50ms)
+
+Example range query for P95 over time:
+histogram_quantiles("phi", 0.95, sum by (vmrange, service) (increase(cube_apm_latency_bucket{service="MyService", span_kind="server"}[5m])))`,
   {
     query: z.string().describe("The metrics query expression (PromQL syntax)"),
     start: z.string().describe("Start timestamp in RFC3339 format or Unix timestamp"),
@@ -183,7 +234,16 @@ server.tool(
 
 server.tool(
   "search_traces",
-  "Search for traces in CubeAPM matching the specified criteria. Returns trace snippets with key spans.",
+  `Search for traces in CubeAPM matching the specified criteria. Returns trace snippets with key spans.
+
+Tips for effective trace searches:
+- Service names are case-sensitive (e.g., "Kratos-Prod" not "kratos")
+- Use the service parameter to filter by service name
+- Use the env parameter to filter by environment
+- Time range is required (start/end in RFC3339 or Unix timestamp)
+
+To discover available service names, first query metrics:
+count by (service) (cube_apm_calls_total{env="UNSET"})`,
   {
     query: z.string().optional().describe("The traces search query"),
     env: z.string().optional().describe("Environment name to filter by"),
