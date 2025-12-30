@@ -262,13 +262,17 @@ Example: Find slow server spans in Shopify-Prod
     sortBy: z.string().optional().describe("Sort results by: duration"),
   },
   async ({ query, env, service, start, end, limit, spanKind, sortBy }) => {
+    // Generate a random index value for the API call
+    const index = Math.random().toString(36).substring(2, 15);
+
     const params = new URLSearchParams({
       query,
       env,
       service,
       start,
       end,
-      limit: String(limit)
+      limit: String(limit),
+      index
     });
     if (spanKind) params.append("spanKind", spanKind);
     if (sortBy) params.append("sortBy", sortBy);
