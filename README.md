@@ -207,7 +207,7 @@ Readable resources exposing CubeAPM data and configuration:
 
 ## CubeAPM Query Patterns
 
-### Metrics Naming Conventions
+### Metrics (PromQL / MetricsQL)
 
 CubeAPM uses specific naming conventions that differ from standard OpenTelemetry:
 
@@ -217,7 +217,7 @@ CubeAPM uses specific naming conventions that differ from standard OpenTelemetry
 | Service label | `service` (NOT `server` or `service_name`) |
 | Common labels | `env`, `service`, `span_kind`, `status_code`, `http_code` |
 
-### Histogram Queries (P50, P90, P95, P99)
+#### Histogram Queries (P50, P90, P95, P99)
 
 CubeAPM uses **VictoriaMetrics-style histograms** with `vmrange` labels instead of Prometheus `le` buckets:
 
@@ -233,7 +233,9 @@ histogram_quantile(0.95, sum by (le) (rate(http_request_duration_bucket[5m])))
 
 > **Note:** Latency values are returned in **seconds** (0.05 = 50ms)
 
-### Logs Label Discovery
+### Logs (LogsQL)
+
+#### Stream Selectors
 
 Log labels vary by source. Use `*` query first to discover available labels:
 
@@ -249,17 +251,92 @@ Log labels vary by source. Use `*` query first to discover available labels:
 # Lambda function logs
 {faas.name="my-lambda-prod"}
 
-# Search with text filter
-{faas.name=~".*-prod"} AND "error"
+# Regex match
+{faas.name=~".*-prod"}
+
+# Text filter with boolean operators
+{faas.name=~".*"} AND "error" AND NOT "retry"
 ```
 
-## Example Queries
+#### Pipe Operators
+
+Chain after any query with `|`:
+
+| Pipe | Syntax | Description |
+|------|--------|-------------|
+| `copy` | `\| copy src AS dst` | Copy field value |
+| `drop` | `\| drop field1, field2` | Remove fields from output |
+| `extract_regexp` | `\| extract_regexp "(?P<name>re)"` | Extract via named capture groups |
+| `join` | `\| join by (field) (...subquery...)` | Join with subquery results |
+| `keep` | `\| keep field1, field2` | Keep only specified fields |
+| `limit` | `\| limit N` | Return at most N results |
+| `math` | `\| math result = f1 + f2` | Arithmetic (+, -, *, /, %) |
+| `rename` | `\| rename src AS dst` | Rename a field |
+| `replace` | `\| replace (field, "old", "new")` | Substring replacement |
+| `replace_regexp` | `\| replace_regexp (field, "re", "repl")` | Regex replacement |
+| `sort` | `\| sort by (field) [asc\|desc]` | Sort results |
+| `stats` | `\| stats <func> as alias [by (fields)]` | Aggregate results |
+| `unpack_json` | `\| unpack_json` | Extract fields from JSON body |
+
+#### Stats Functions
+
+Used with the `| stats` pipe:
+
+| Function | Description |
+|----------|-------------|
+| `avg(field)` | Arithmetic mean |
+| `count()` | Total matching entries |
+| `count_empty(field)` | Entries where field is empty |
+| `count_uniq(field)` | Distinct values |
+| `max(field)` | Maximum value |
+| `median(field)` | Median (50th percentile) |
+| `min(field)` | Minimum value |
+| `quantile(p, field)` | p-th quantile (e.g., `quantile(0.95, duration)`) |
+| `sum(field)` | Sum of values |
+
+#### Example Log Queries
+
+```logsql
+# Count errors per Lambda function
+{faas.name=~".*"} AND "error" | stats count() as errors by (faas.name)
+
+# Top 10 slowest requests
+{service_name="my-service"} | sort by (duration) desc | limit 10
+
+# Extract and aggregate from JSON logs
+{service_name="api"} | unpack_json | stats avg(response_time) as avg_rt by (endpoint)
+```
+
+### Traces
+
+Trace queries use the same pipe syntax as logs: `{stream_selector} | pipe1 | pipe2`
+
+**Important notes:**
+- `query`, `env`, `service` are REQUIRED parameters
+- Duration is in **milliseconds** (not seconds like metrics)
+- `p95` is NOT a valid stats function — use `quantile(0.95, duration)`
+- Service names are case-sensitive (e.g., `"Kratos-Prod"` not `"kratos"`)
+
+#### Example Trace Queries
+
+```
+# P95 latency for a service
+{service="Kratos-Prod", span_kind="server"} | stats quantile(0.95, duration) as p95_ms
+
+# Error count by endpoint
+{service="Kratos-Prod", status_code="ERROR"} | stats count() as errors by (http_route)
+
+# Slowest spans
+{service="Kratos-Prod"} | sort by (duration) desc | limit 20
+```
+
+## Example Natural Language Queries
 
 ### Logs
 ```
 "Show me logs from webhook-lambda-prod"
 "Find all logs containing 'timeout' in the last hour"
-"Query logs from Lambda functions in production"
+"Count errors per Lambda function in the last 24h"
 ```
 
 ### Metrics
@@ -271,7 +348,7 @@ Log labels vary by source. Use `*` query first to discover available labels:
 
 ### Traces
 ```
-"Find slow traces (>2s) from the order-service"
+"Find the P95 latency for Kratos-Prod using trace stats"
 "Show me traces with errors in the production environment"
 "Get the full waterfall for trace ID abc123"
 ```

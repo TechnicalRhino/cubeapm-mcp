@@ -49,11 +49,39 @@ LogsQL Query Syntax:
 - Negation: {faas.name!="unwanted-service"}
 - Combine filters: {env="UNSET", faas.name=~".*-lambda.*"}
 
+PIPE OPERATORS — chain after query with "|":
+  | copy src_field AS dst_field       — copy field value
+  | drop field1, field2               — remove fields from output
+  | extract_regexp "(?P<name>regex)"  — extract fields via named capture groups
+  | join by (field) (...subquery...)   — join with subquery results
+  | keep field1, field2               — keep only specified fields
+  | limit N                           — return at most N results
+  | math result = field1 + field2     — compute derived fields (+, -, *, /, %)
+  | rename src AS dst                 — rename a field
+  | replace (field, "old", "new")     — replace substring in field
+  | replace_regexp (field, "re", "replacement") — regex replacement
+  | sort by (field) [asc|desc]        — sort results
+  | stats <func> as alias [by (group_fields)] — aggregate results
+  | unpack_json                       — extract fields from JSON log body
+
+STATS FUNCTIONS (use with | stats pipe):
+  avg(field)            — arithmetic mean
+  count()               — total number of matching entries
+  count_empty(field)    — count entries where field is empty
+  count_uniq(field)     — count distinct values
+  max(field)            — maximum value
+  median(field)         — median (50th percentile)
+  min(field)            — minimum value
+  quantile(p, field)    — p-th quantile (e.g., quantile(0.95, duration))
+  sum(field)            — sum of values
+
 Example queries:
 - All logs (discover structure): *
 - Lambda logs: {faas.name="webhook-lambda-prod"}
 - Search errors: {faas.name=~".*"} AND "error"
-- By environment: {env="production"}`,
+- By environment: {env="production"}
+- Count errors per function: {faas.name=~".*"} AND "error" | stats count() as error_count by (faas.name)
+- Top 10 slowest: {service_name="my-service"} | sort by (duration) desc | limit 10`,
   {
     query: z.string().describe("The log search query including stream filters (LogsQL syntax)"),
     start: z.string().describe("Start time in RFC3339 format (e.g., 2024-01-01T00:00:00Z) or Unix timestamp in seconds"),
@@ -242,15 +270,45 @@ IMPORTANT - Required Parameters:
 - Use env="UNSET" if environment is not configured
 - Service names are case-sensitive (e.g., "Kratos-Prod" not "kratos")
 
-Optional filters:
+TRACE QUERY SYNTAX:
+The query parameter supports pipe syntax similar to LogsQL:
+  {stream_selector} | pipe1 | pipe2
+
+Stream selectors filter spans:
+  {service="Kratos-Prod"}
+  {service="Kratos-Prod", span_kind="server"}
+  {http_code=~"5.."}
+
+PIPE OPERATORS — same as LogsQL pipes:
+  | copy, | drop, | extract_regexp, | join, | keep, | limit,
+  | math, | rename, | replace, | replace_regexp, | sort,
+  | stats <func> as alias [by (group_fields)], | unpack_json
+
+STATS FUNCTIONS (for aggregate trace analysis):
+  avg(field)            — arithmetic mean
+  count()               — total matching spans
+  count_uniq(field)     — distinct values
+  max(field)            — maximum value
+  median(field)         — median value
+  min(field)            — minimum value
+  quantile(p, field)    — p-th quantile (e.g., quantile(0.95, duration))
+  sum(field)            — sum of values
+
+IMPORTANT: Duration in traces is in MILLISECONDS.
+IMPORTANT: "p95" is NOT a valid function — use quantile(0.95, duration).
+
+Example queries:
+  Wildcard: query="*"
+  P95 latency: query='{service="Kratos-Prod", span_kind="server"} | stats quantile(0.95, duration) as p95_latency'
+  Error count by endpoint: query='{service="Kratos-Prod", status_code="ERROR"} | stats count() as errors by (http_route)'
+  Slow spans: query='{service="Kratos-Prod"} | sort by (duration) desc | limit 20'
+
+Optional filters (applied in addition to query):
 - spanKind: server, client, consumer, producer
 - sortBy: duration (to find slow traces)
 
 To discover available service names, first query metrics:
-count by (service) (cube_apm_calls_total{env="UNSET"})
-
-Example: Find slow server spans in Shopify-Prod
-  query="*", env="UNSET", service="Shopify-Prod", spanKind="server", sortBy="duration"`,
+count by (service) (cube_apm_calls_total{env="UNSET"})`,
   {
     query: z.string().default("*").describe("The traces search query (use * for wildcard)"),
     env: z.string().default("UNSET").describe("Environment name (use UNSET if not configured)"),
@@ -545,34 +603,122 @@ server.resource(
         {
           uri: "cubeapm://query-patterns",
           mimeType: "text/markdown",
-          text: `# CubeAPM Query Patterns
+          text: `# CubeAPM Query Patterns — Full Reference
 
-## Metrics Naming Conventions
+## Metrics (PromQL / MetricsQL)
+
+### Naming Conventions
 - Prefix: \`cube_apm_*\` (e.g., cube_apm_calls_total, cube_apm_latency_bucket)
 - Service label: \`service\` (NOT "server" or "service_name")
 - Common labels: env, service, span_kind, status_code, http_code
 
-## Histogram Queries (Percentiles)
-CubeAPM uses VictoriaMetrics-style histograms with \`vmrange\` label:
+### Histogram Queries (Percentiles)
+CubeAPM uses VictoriaMetrics-style histograms with \`vmrange\` label (NOT Prometheus \`le\` buckets):
 
 \`\`\`promql
-# P95 Latency
+# ✅ Correct — use histogram_quantiles() with vmrange
 histogram_quantiles("phi", 0.95, sum by (vmrange, service) (
   increase(cube_apm_latency_bucket{service="MyService", span_kind="server"}[5m])
 ))
+
+# ❌ Wrong — standard Prometheus syntax won't work
+histogram_quantile(0.95, sum by (le) (rate(http_request_duration_bucket[5m])))
 \`\`\`
 
-Note: Latency values are in SECONDS (0.05 = 50ms)
+Latency values are in SECONDS (0.05 = 50ms).
+
+---
 
 ## Logs (LogsQL)
-- Use \`*\` to discover available labels
-- Lambda logs: \`{faas.name="my-function"}\`
-- Service logs: \`{service_name="my-service"}\`
+
+### Stream Selectors
+- \`*\` — wildcard, discover all labels
+- \`{faas.name="my-function"}\` — exact match
+- \`{faas.name=~".*-prod"}\` — regex match
+- \`{faas.name!="unwanted"}\` — negation
+- \`{env="production", faas.name=~".*"}\` — combine filters
+
+### Text Filters
+- \`{stream} AND "error"\` — text search
+- \`{stream} AND "timeout" AND NOT "retry"\` — boolean operators
+
+### Pipe Operators
+Chain after query with \`|\`:
+
+| Pipe | Syntax | Description |
+|------|--------|-------------|
+| copy | \`copy src AS dst\` | Copy field value |
+| drop | \`drop field1, field2\` | Remove fields from output |
+| extract_regexp | \`extract_regexp "(?P<name>re)"\` | Extract via named capture groups |
+| join | \`join by (field) (...subquery...)\` | Join with subquery |
+| keep | \`keep field1, field2\` | Keep only specified fields |
+| limit | \`limit N\` | Return at most N results |
+| math | \`math result = f1 + f2\` | Arithmetic (+, -, *, /, %) |
+| rename | \`rename src AS dst\` | Rename a field |
+| replace | \`replace (field, "old", "new")\` | Substring replacement |
+| replace_regexp | \`replace_regexp (field, "re", "repl")\` | Regex replacement |
+| sort | \`sort by (field) [asc/desc]\` | Sort results |
+| stats | \`stats <func> as alias [by (fields)]\` | Aggregate results |
+| unpack_json | \`unpack_json\` | Extract fields from JSON body |
+
+### Stats Functions
+Used with \`| stats\` pipe:
+
+| Function | Description |
+|----------|-------------|
+| \`avg(field)\` | Arithmetic mean |
+| \`count()\` | Total matching entries |
+| \`count_empty(field)\` | Entries where field is empty |
+| \`count_uniq(field)\` | Distinct values |
+| \`max(field)\` | Maximum value |
+| \`median(field)\` | Median (50th percentile) |
+| \`min(field)\` | Minimum value |
+| \`quantile(p, field)\` | p-th quantile (e.g., quantile(0.95, duration)) |
+| \`sum(field)\` | Sum of values |
+
+### Example Log Queries
+\`\`\`logsql
+# Discover labels
+*
+
+# Count errors per Lambda function
+{faas.name=~".*"} AND "error" | stats count() as errors by (faas.name)
+
+# Top 10 slowest requests
+{service_name="my-service"} | sort by (duration) desc | limit 10
+\`\`\`
+
+---
 
 ## Traces
+
+### Query Syntax
+Trace queries use the same pipe syntax:
+\`{stream_selector} | pipe1 | pipe2\`
+
+### Stream Selectors
+- \`{service="Kratos-Prod"}\`
+- \`{service="Kratos-Prod", span_kind="server"}\`
+- \`{http_code=~"5.."}\`
+
+### Important Notes
 - query, env, service are REQUIRED parameters
-- Use \`sortBy=duration\` to find slow traces
+- Duration is in MILLISECONDS (not seconds like metrics)
+- \`p95\` is NOT a valid function — use \`quantile(0.95, duration)\`
+- Use \`sortBy=duration\` param to find slow traces
 - Filter by spanKind: server, client, consumer, producer
+
+### Example Trace Queries
+\`\`\`
+# P95 latency for a service
+{service="Kratos-Prod", span_kind="server"} | stats quantile(0.95, duration) as p95_ms
+
+# Error count by endpoint
+{service="Kratos-Prod", status_code="ERROR"} | stats count() as errors by (http_route)
+
+# Slowest spans
+{service="Kratos-Prod"} | sort by (duration) desc | limit 20
+\`\`\`
 `,
         },
       ],
