@@ -31,6 +31,76 @@ const server = new McpServer({
 // LOGS APIs
 // ============================================
 
+// Convert RFC3339 string or Unix timestamp (s/ms/μs/ns) to nanoseconds.
+// CubeAPM's prod UI embeds time in queries as `_time:[ns_start, ns_end)`,
+// so we mirror that wire format rather than relying on start/end form params.
+function toNanoseconds(t: string): string {
+  if (/^\d+$/.test(t)) {
+    const n = BigInt(t);
+    if (n < 10_000_000_000n) return (n * 1_000_000_000n).toString();         // seconds
+    if (n < 10_000_000_000_000n) return (n * 1_000_000n).toString();          // milliseconds
+    if (n < 10_000_000_000_000_000n) return (n * 1000n).toString();           // microseconds
+    return n.toString();                                                      // nanoseconds
+  }
+  const ms = new Date(t).getTime();
+  if (Number.isNaN(ms)) throw new Error(`Invalid timestamp: ${t}`);
+
+  return (BigInt(ms) * 1_000_000n).toString();
+}
+
+// Find the index of the first top-level pipe operator in a LogsQL query,
+// ignoring `|` inside quoted strings (regex alternation like `=~"a|b"`),
+// brace groups `{...}`, or parens `(...)`. Returns -1 if no pipe found.
+function findFirstTopLevelPipe(query: string): number {
+  let inDouble = false;
+  let inSingle = false;
+  let braceDepth = 0;
+  let parenDepth = 0;
+
+  for (let i = 0; i < query.length; i++) {
+    const c = query[i];
+    const prev = i > 0 ? query[i - 1] : "";
+
+    // Honour backslash escapes inside strings (e.g. `"shopify\\-prod"`).
+    if (prev === "\\") continue;
+
+    if (inDouble) {
+      if (c === '"') inDouble = false;
+      continue;
+    }
+    if (inSingle) {
+      if (c === "'") inSingle = false;
+      continue;
+    }
+
+    if (c === '"') { inDouble = true; continue; }
+    if (c === "'") { inSingle = true; continue; }
+    if (c === "{") { braceDepth++; continue; }
+    if (c === "}") { braceDepth--; continue; }
+    if (c === "(") { parenDepth++; continue; }
+    if (c === ")") { parenDepth--; continue; }
+
+    if (c === "|" && braceDepth === 0 && parenDepth === 0) return i;
+  }
+
+  return -1;
+}
+
+// Inject `_time:[start_ns,end_ns)` before the first top-level pipe operator
+// (or at end if none). Quote/brace/paren aware to handle regex alternations
+// like `=~"shopify-latest|shopify-prod"` without splitting mid-string.
+function injectTimeFilter(query: string, startNs: string, endNs: string): string {
+  const timeFilter = `_time:[${startNs},${endNs})`;
+  const pipeIdx = findFirstTopLevelPipe(query);
+
+  if (pipeIdx === -1) return `${query.trim()} ${timeFilter}`.trim();
+
+  const head = query.slice(0, pipeIdx).trim();
+  const tail = query.slice(pipeIdx);
+
+  return `${head} ${timeFilter} ${tail}`;
+}
+
 server.tool(
   "query_logs",
   `Query logs from CubeAPM using LogsQL syntax (VictoriaLogs compatible). Returns log entries matching the query.
@@ -89,10 +159,12 @@ Example queries:
     limit: z.number().optional().default(100).describe("Maximum log entries to return (default: 100)"),
   },
   async ({ query, start, end, limit }) => {
+    const startNs = toNanoseconds(start);
+    const endNs = toNanoseconds(end);
+    const finalQuery = injectTimeFilter(query, startNs, endNs);
+
     const params = new URLSearchParams({
-      query,
-      start,
-      end,
+      query: finalQuery,
       limit: String(limit),
     });
 
